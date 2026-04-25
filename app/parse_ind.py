@@ -11,7 +11,7 @@ EXCHANGE = "NSE"
 DEFAULT_BIN_SIZE = 50
 DEFAULT_NIL = "0"
  
-class StockWriter:
+class IndicesWriter:
     def __init__(self,logger:object,config:dict,output_path = str):
         
         #defaults
@@ -81,7 +81,6 @@ class StockWriter:
 
             *_,symbol, content = sections
         
-            # kv_pairs = [kv.split("=", 1) for kv in field_values.split("~") if "=" in kv]
             field_map = self._generate_field_map(content)
             #after fetching field_map , filter required data
             for port_name, port_val in self.ports.items():
