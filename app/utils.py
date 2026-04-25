@@ -1,199 +1,201 @@
-import os, re, json, string, random
-from datetime import datetime
-import unicodedata
-
-
+import os, re, json, string, shutil, json5, random
+import traceback, zipfile
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from collections import defaultdict
+import pandas as pd #type:ignore
+from typing import List
+from uuid import uuid4
 class Helper:
-    # ----------------------------
-    # File + Directory Utilities
-    # ----------------------------
-    @staticmethod        
-    def create_dirs(root_path: str, dirs: list) -> list:
-        created_paths = []
-        for dir_name in dirs:
-            full_path = os.path.join(root_path, dir_name)
-            os.makedirs(full_path, exist_ok=True)
-            created_paths.append(full_path)
-        return created_paths if len(created_paths) > 1 else created_paths[0]
+    def __init__(self):
+        pass
     
-    @staticmethod        
-    def create_dir(root_path: str, *args) -> str:
-        full_path = os.path.join(root_path, *args)
-        os.makedirs(full_path, exist_ok=True)
-        return full_path
 
     @staticmethod
-    def create_path(path: str, *args) -> str:
-        return os.path.join(path, *args)
+    def generate_uid():
+        return uuid4().hex
+    
+    
+    @staticmethod
+    def today_dt(fmt: str, tz: str):
+        """
+        fmt: datetime format string (e.g. "%Y-%m-%d %H:%M:%S")
+        tz: timezone string (e.g. "UTC", "Asia/Kolkata")
+        """
+        return datetime.now(ZoneInfo(tz)).strftime(fmt)
+
+
+    def generate_dates(self,date_format, minus_days=1):
+        today = datetime.today()
+        to_str = today.strftime(date_format)
+        yesterday = today - timedelta(days=minus_days)
+        from_str = yesterday.strftime(date_format)
+        return from_str, to_str
+        # return "20-01-2026","21-01-2026"
+        
+    
+    def zip_folder(self,folder_path, zip_path):
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(folder_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, folder_path)
+                        zipf.write(file_path, arcname)
+        except Exception as e:
+            traceback.print_exc()
+            raise
 
     @staticmethod
-    def read_file(filepath: str) -> str:
-        with open(filepath, 'r', encoding="utf-8") as f:
+    def read_file(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
+    
+    #JSON UN/LOAD
     @staticmethod
-    def write_file(filepath: str, content: str, mode="w"):
-        with open(filepath, mode, encoding="utf-8") as f:
-            f.write(content)
-
-    @staticmethod
-    def write_binary_file(filepath: str, binary_content: bytes):
-        with open(filepath, 'wb') as f:
-            f.write(binary_content)
-
-    @staticmethod
-    def get_file_extension(filename: str) -> str:
-        return os.path.splitext(filename)[1]
-
-    @staticmethod
-    def delete_files_and_empty_folder(file_path: str) -> bool:
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                parent_dir = os.path.dirname(file_path)
-                if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
-                    os.rmdir(parent_dir)
-                return True
-            return False
-        except Exception:
-            return False
-
-
-    # ----------------------------
-    # JSON & Text Handling
-    # ----------------------------
+    def create_dir(base_path, *folders):
+        dir_path = os.path.join(base_path, *folders)
+        os.makedirs(dir_path, exist_ok=True)
+        return dir_path
+    
     @staticmethod
     def save_json(data: dict, path: str, indent: int = 2):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=indent)
 
     @staticmethod
-    def load_json(path: str):
-        with open(path, "r", encoding="utf-8") as f:
+    def load_json(file_path: str):
+        if not os.path.exists(file_path):
+            return
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    
-    # @staticmethod
-    # def save_json5(data: dict, path: str, indent: int = 2):
-    #     with open(path, "w", encoding="utf-8") as f:
-    #         json5.dump(data, f, indent=indent)
-
-    # @staticmethod
-    # def load_json5(path: str):
-    #     with open(path, "r", encoding="utf-8") as f:
-    #         return json5.load(f)
-
-    @staticmethod
-    def save_text(data, path: str, mode='w'):
-        if not data:
-            raise ValueError("Empty data cannot be saved.")
-        if mode not in ('w', 'a'):
-            raise ValueError(f"Invalid mode '{mode}'. Use 'w' or 'a'.")
         
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, mode, encoding='utf-8') as f:
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    f.write(f"{k}:{v}\n")
-            elif isinstance(data, list):
-                for k in data:
-                    f.write(f"{k}\n")
-            elif isinstance(data, str):
-                f.write(data)
-            else:
-                raise ValueError(f"Invalid data type: {type(data)}")
-
-
-    # ----------------------------
-    # String Normalization + Validation
-    # ----------------------------
     @staticmethod
-    def is_numeric(text):
+    def save_json5(data: dict, path: str, indent: int = 2):
+        with open(path, "w", encoding="utf-8") as f:
+            json5.dump(data, f, indent=indent)
+
+    @staticmethod
+    def load_json5(file_path: str):
+        if not os.path.exists(file_path):
+            return
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json5.load(f)
+        
+    @staticmethod
+    def load_json_as_string(path: str, indent: int = None) -> str:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.dumps(json.load(f), indent=indent, ensure_ascii=False)
+
+    @staticmethod
+    def load_json5_as_string(path: str, indent: int = None) -> str:
+        with open(path, "r", encoding="utf-8") as f:
+            return json5.dumps(json5.load(f), indent=indent)
+
+    
+    #WRITE TEXT
+    @staticmethod
+    def save_text(data,path:str):
+        if not data:
+            print("Empty Data")
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a', encoding='utf-8') as f:
+            if isinstance(data,dict):
+                f.writelines(f"{k}:{v}\n" for k,v in data.items())
+            elif isinstance(data,list):
+                f.writelines(f"{k}\n" for k in data)
+            elif isinstance(data,str):
+                f.writelines(data)
+            else: print("Invalid type")
+           
+
+
+    def _normalize_key(self,text: str) -> str:
+        if not isinstance(text,str):
+            return text
+        text = re.sub(r"[^\w\s\.]", "", text)
+        text = re.sub(r"\s+", "_", text)
+        return text.strip().lower()
+    
+    def _normalize_key_to_alnum_underscore(self, text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        text = text.strip().lower()
+        text = re.sub(r"[^\w]", "_", text)
+        text = re.sub(r"__+", "_", text)
+        return text.strip("_")
+
+    def _remove_duplicates(self,text):
+        if not text:
+            return text
+        seen = []
+        text = text.split(" ")
+        for word in text:
+            word = word.lower().strip()
+            if word not in seen:
+                seen.append(word)
+        return " ".join(seen)
+
+    #match type
+    def is_numeric(self,text):
         return bool(re.fullmatch(r'[+-]?(\d+(\.\d*)?|\.\d+)', text))
 
-    @staticmethod
-    def is_alphanumeric(text):
+    def is_alphanumeric(self,text):
         return bool(re.fullmatch(r'[A-Za-z0-9]+', text))
 
-    @staticmethod
-    def is_alpha(text):
+    def is_alpha(self,text):
         return bool(re.fullmatch(r'[A-Za-z]+', text))
-
-    @staticmethod
-    def _normalize_whitespace(text: str) -> str:
-        return re.sub(r"\s+", " ", text).strip() if isinstance(text, str) else text
+        
+    def _remove_non_word_space_chars(self,text:str)->str:
+        if not isinstance(text,str):
+            return text
+        text = re.sub("[^\\w\\s]", "", text).strip()
+        return text
     
-    @staticmethod
-    def _normalize_alphanumeric(text: str) -> str:
+    def _normalize_whitespace(self,text:str)->str:
+        if not isinstance(text,str):
+            return text
+        return re.sub(r"\s+", " ", text).strip()
+    
+    def _normalize_date(self,text:str)->str:
+        if not isinstance(text,str):
+            return text
+        text = re.sub(r"[^A-Za-z0-9\s\.\/\,\-\\]+"," ",text).strip()
+        return self._normalize_whitespace(text)
+    
+    def _normalize_ascii(self, text: str) -> str:
         if not isinstance(text, str):
+            return text
+        text = re.sub(r"[^\x20-\x7E]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _normalize_alphanumeric(self, text: str) -> str:
+        if not isinstance(text,str):
             return text
         text = re.sub(r"[^a-zA-Z0-9]+", " ", str(text))
         return re.sub(r"\s+", " ", text).strip().lower()
     
-    @staticmethod
-    def _normalize_alpha(text: str) -> str:
-        if not isinstance(text, str):
+    def _normalize_alpha(self, text: str) -> str:
+        if not isinstance(text,str):
             return text
         text = re.sub(r"[^a-zA-Z]+", " ", str(text))
         return re.sub(r"\s+", " ", text).strip().lower()
 
-    @staticmethod
-    def _normalize_numeric(text: str) -> str:
-        if not isinstance(text, str):
+    def _normalize_numeric(self, text: str) -> str:
+        if not isinstance(text,str):
             return text
         text = re.sub(r"[^0-9\.]+", " ", str(text))
         return re.sub(r"\s+", " ", text).strip().lower()
-
-    @staticmethod
-    def snake_case(text: str) -> str:
-        text = re.sub(r'([A-Z]+)', r' \1', text).strip()
-        return re.sub(r'[_\s-]+', '_', text).lower()
-
-    @staticmethod
-    def camel_case(text: str) -> str:
-        text = re.sub(r'[_\s-]+', ' ', text)
-        text = text.title()
-        return text[0].lower() + text[1:].replace(' ', '')
-
-    @staticmethod
-    def sanitize_Win_filename(name):
-        return re.sub(r'[<>:"/\\|?*]', '_', name)
-
-    @staticmethod
-    def fix_mojibake(text: str) -> str:
-        try:
-            return text.encode("latin1").decode("utf-8")
-        except:
-            return text
-
-
-    # ----------------------------
-    # List Utilities
-    # ----------------------------
-    @staticmethod
-    def chunk_list(data: list, size: int):
-        return [data[i:i + size] for i in range(0, len(data), size)]
-
-    @staticmethod
-    def flatten_list(list_of_lists: list):
-        return [item for sublist in list_of_lists for item in sublist]
     
-    @staticmethod
-    def remove_duplicates(data: list):
-        return list(dict.fromkeys(data))
+    
+    def write_df_safe(self, writer, df, sheet_name, note_if_empty=None):
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+        else:
+            placeholder = pd.DataFrame({
+                "Info": [note_if_empty or "No data available"]
+            })
+            placeholder.to_excel(writer, sheet_name=sheet_name, index=False)
 
-
-    # ----------------------------
-    # Time / IDs
-    # ----------------------------
-    @staticmethod
-    def get_timestamp(sep=":"):
-        now = datetime.now()
-        return now.strftime(f"%H{sep}%M{sep}%S")
-
-    @staticmethod
-    def generate_uid(segment_count=3, segment_length=3):
-        segments = [
-            ''.join(random.choices(string.ascii_uppercase, k=segment_length))
-            for _ in range(segment_count)
-        ]
-        return '-'.join(segments)

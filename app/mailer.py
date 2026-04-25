@@ -1,129 +1,103 @@
 import smtplib
+import traceback
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from pathlib import Path
 from datetime import datetime
-import logging
-import os,json
-
-from app.constants import PATHS
-
-# logger = logging.getLogger("fs_logger")
-
 
 class Mailer:
-    def __init__(self, server='172.17.0.126', port=25, 
-                sender='Kaustubh.Keny@cogencis.com', 
-                recipients=['Kaustubh.Keny@cogencis.com'], 
-                cc=None, bcc=None, logger=None):
+    def __init__(self,cfg:dict):
         
-        try:
-            
-            paths = PATHS
-            mail_config = paths.get("mail", {})
-            server = mail_config.get("server", server)
-            port = mail_config.get("port", port)
-            sender = mail_config.get("sender", sender)
-            recipients = mail_config.get("recipients", recipients)
-            cc = mail_config.get("cc", cc)
-            bcc = mail_config.get("bcc", bcc)               
-        except FileNotFoundError:
-            
-            print("paths.json file not found. Using default values.")
-        
-        self.SERVER = server
-        self.PORT = port
-        self.FROM = sender or "noreply@example.com"
-        self.RECPTS = recipients if isinstance(recipients, list) else [recipients] if recipients else []
-        self.CC = cc if isinstance(cc, list) else [cc] if cc else []
-        self.BCC = bcc if isinstance(bcc, list) else [bcc] if bcc else []
-        
-        self.logger = logger or logging.getLogger(__name__)
+        self.server = cfg.get("server", "localhost")
+        self.port = cfg.get("port", 25)
+        self.sender = cfg.get("sender", "noreply@example.com")
 
+        self.recipients = self._list(cfg.get("recipients"))
+        self.dev_recipients = self._list(cfg.get("dev_recipients"))
 
-    def start_mail(self, program, data=None,attachments=None):
-        subject = f"{program} — Execution Started"
-        body = f"""
-        <html>
-            <body>
-                <p>Hello Team,</p>
-                <p>The program <b>{program}</b> has <b>started</b>.</p>
-                <p>The Program is Scraping Websites:{','.join(data)}</p>
-                <p>Regards,<br>Kaustubh</p>
-            </body>
-        </html>
-        """
-        msg = self.construct_mail(subject=subject, body_html=body, attachments = attachments)
-        self.send_mail(msg)
-   
-    def end_mail(self, program, data=None,attachments=None):
-        subject = f"{program} — Execution Completed"
-        body = f"""
-        <html>
-            <body>
-                <p>Hello Team,</p>
-                <p>The program <b>{program}</b> has <b>completed</b> execution.</p>
-                <p>Regards,<br>Kaustubh</p>
-            </body>
-        </html>
-        """
-        msg = self.construct_mail(subject=subject, body_html=body, attachments = attachments)
-        self.send_mail(msg)
+        self.cc = self._list(cfg.get("cc"))
+        self.bcc = self._list(cfg.get("bcc"))
 
-    def default_body(self):
-        return """
-        <html>
-            <body>
-                <p>Hello Team,</p>
-                <p>This is Default Mail Message.</p>
-                <p>Regards,<br>System</p>
-            </body>
-        </html>
+        self.send_enabled = cfg.get("send_mail", True)
+
+    # -----------------------
+    # PUBLIC API
+    # -----------------------
+
+    def send(self, subject, body_html=None, attachments=None, dev=True):
+        if not self.send_enabled:
+            return
+
+        msg = self._build_msg(subject, body_html, attachments, dev)
+        self._dispatch(msg, dev)
+
+    def start(self, program, data=None, dev=True):
+        codes = ', '.join(map(str, data)) if data else "N/A"
+        time = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        html = f"""
+        <p>Program <b>{program}</b> started.</p>
+        <p><b>Time:</b> {time}</p>
+        <p><b>Codes:</b> {codes}</p>
         """
-    
-    def send_custom(self, subject, body_html=None, body_text=None):
-        msg = self.construct_mail(subject=subject, body_html=body_html, body_text=body_text)
-        self.send_mail(msg)
-    
-    def construct_mail(self, subject, body_html=None, body_text=None, attachments = None):
+        self.send(f"[STARTED] {program}", html, dev=dev)
+
+    def end(self, program, dev=False):
+        time = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        html = f"""
+        <p>Program <b>{program}</b> completed.</p>
+        <p><b>Time:</b> {time}</p>
+        """
+        self.send(f"[COMPLETED] {program}", html, dev=dev)
+
+    def error(self, program, err=None, dev=True):
+        trace = f"<pre>{traceback.format_exc()}</pre>" if err else ""
+
+        html = f"""
+        <p><b>{program}</b> failed.</p>
+        <p><b>Error:</b> {err}</p>
+        {trace}
+        """
+        self.send(f"[ERROR] {program}", html, dev=dev)
+
+    # -----------------------
+    # INTERNALS
+    # -----------------------
+
+    def _build_msg(self, subject, body_html, attachments, dev):
         msg = MIMEMultipart("alternative")
-        msg["From"] = self.FROM
-        msg["To"] = ", ".join(self.RECPTS)
-        if self.CC: msg["Cc"] = ", ".join(self.CC)
-        msg["Subject"] = f"{subject} - {datetime.now().strftime('%Y-%m-%d')}"
 
-        if body_text: msg.attach(MIMEText(body_text, "plain"))
-        if body_html: msg.attach(MIMEText(body_html, "html"))
-        else: msg.attach(MIMEText(self.default_body(), "html"))
-        
-        
-        if attachments:
-            for file_path in attachments:
-                path = Path(file_path)
-                if path.exists():
-                    with open(path, "rb") as f:
-                        part = MIMEApplication(f.read(), Name=path.name)
-                        part['Content-Disposition'] = f'attachment; filename="{path.name}"'
-                        msg.attach(part)
-                else:
-                    self.logger.warning(f"Attachment not found: {file_path}")
+        recpts = self.dev_recipients if dev else self.recipients
+
+        msg["From"] = self.sender
+        msg["To"] = ", ".join(recpts)
+        msg["Subject"] = f"{subject} - {datetime.now().date()}"
+
+        if not dev and self.cc:
+            msg["Cc"] = ", ".join(self.cc)
+
+        msg.attach(MIMEText(body_html or "<p>No content</p>", "html"))
+
+        for path in self._list(attachments):
+            p = Path(path)
+            if p.exists():
+                with open(p, "rb") as f:
+                    part = MIMEApplication(f.read(), Name=p.name)
+                    part['Content-Disposition'] = f'attachment; filename="{p.name}"'
+                    msg.attach(part)
 
         return msg
 
-    def send_mail(self, msg):
-        try:
-            all_recipients = self.RECPTS + self.CC + self.BCC
-            with smtplib.SMTP(self.SERVER, self.PORT) as server:
-                server.send_message(msg, from_addr=self.FROM, to_addrs=all_recipients)
-            self.logger.info("Email sent successfully.")
-        except Exception as e:
-            self.logger.error(f"Failed to send email: {e}")
+    def _dispatch(self, msg, dev):
+        recpts = self.dev_recipients if dev else self.recipients
+        all_recipients = recpts + self.cc + self.bcc
 
-    # def test_connection(self):
-    #     try:
-    #         with smtplib.SMTP(self.SERVER, self.PORT) as server:
-    #             server.noop()
-    #         print("SMTP connection successful.")
-    #     except Exception as e:
-    #         print(f"SMTP connection failed: {e}")
+        with smtplib.SMTP(self.server, self.port) as s:
+            s.send_message(msg, from_addr=self.sender, to_addrs=all_recipients)
+
+    def _list(self, val):
+        if not val:
+            return []
+        return val if isinstance(val, list) else [val]
